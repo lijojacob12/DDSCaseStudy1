@@ -59,6 +59,7 @@ Low concentration of IPAs & Ales in southern part of the US
 Florida has the 3rd largest population and Georgia has the 8th highest population in the US  
 Our recommendation is to release a new beer IPA or Ale in the Florida/Georgia as there is the most opportunity in the state based on our analysis.  
 
+### Files  
 Files included as part of this documentation are  
 
 1. CraftBeerCaseStudy.Rmd  
