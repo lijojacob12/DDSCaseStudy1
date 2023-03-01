@@ -11,10 +11,12 @@ The case study includes the following topics
   Top 5 States are Colorado, Calfornia, Michigan, Oregon and Texas  
 
   ## How are we handling the Missing values and duplicates in the datasets  
-  Many missing ABV and IBU values were in the data as best we could using external resources.  
+  Many missing ABV and IBU values were in the data as best we could using external resources(https://www.brewerydb.com/  and  https://untappd.com/home)  
   Missing data was highly correlated to certain breweries so imputation and exclusion would not be a valid option.  
   After filling in most of  ABV data we dropped N/A’s and then imputed the mean for remaining IBU if it was missing based on beer style.  
   Total number of dropped beers is 23 or ~ 1% of total  
+  
+  Note: Commented code in the missing value section is to determine the breweries or style not missing at random.
 
   ## Some stats on ABV and IBU variables and their relationship  
   ### Median ABV  
@@ -49,15 +51,23 @@ The case study includes the following topics
   By looking at the data based on Type of beers, IPA tent to have more bitterness for same Alcohol content when compared with other Ales and other type of beers.  
 
   ### KNN Model  
-
+  We iterated 200 times for values of K ranging from 1-20 and found that the optimal value for K is 5.  
   As part of implementing a KNN model to predict beer types('IPA' and 'Other Ales'), the variables ABV and IBU are used.
   Looking at the results of our model it seems to be doing a great job classifying the IPAs vs. Other Ales with an accuracy of ~ 90%, sensitivity ~ 89.5% and specificity ~ 91% with a K value of 5. 
+
+  IPAs tend to be somewhere above 50 IBU’s and ales tend to fall below 50 IBU’s.
 
   ### Recommendation for new beer  
 
   Low concentration of IPAs & Ales in southern part of the US  
   Florida has the 3rd largest population and Georgia has the 8th highest population in the US  
   Our recommendation is to release a new beer IPA or Ale in the Florida/Georgia as there is the most opportunity in the state based on our analysis.  
+
+ ### Summary  
+  Breweries seems to be clustered along the west cost, northeast and eastern Midwest US.  
+  The evidence suggest as IBU goes up so does ABV.  
+  The evidence suggest that a common defining factor between IPAs and Other Ales is IBU  
+  To introduce new beers, Budweiser should look to release a new IPA or Ale in Florida and/or Georgia.  
 
 ## Files  
 Files included as part of this documentation are  
