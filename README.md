@@ -10,7 +10,7 @@ The case study includes the following topics
 Most of the breweries seems to be clustered along the west cost, northeast and eastern Midwest US.  
 Top 5 States are Colorado, Calfornia, Michigan, Oregon and Texas  
 
-##How are we handling the Missing values and duplicates in the datasets  
+## How are we handling the Missing values and duplicates in the datasets  
 Many missing ABV and IBU values were in the data as best we could using external resources.  
 Missing data was highly correlated to certain breweries so imputation and exclusion would not be a valid option.  
 After filling in most of  ABV data we dropped N/A’s and then imputed the mean for remaining IBU if it was missing based on beer style.  
@@ -26,16 +26,38 @@ West Virginia has high median IBU since sample data set contains only two beers 
 Some of the beers in New Hampshire has very low IBU values(below 20)
 The overall median IBU is 33
 
-### Max ABV  
+### Maximum ABV  
 Colorado - 12.8% Alcohol Content
 Lee Hill Series Vol. 5 - Belgian Style Quadrupel Ale by Upslope Brewing Company in Boulder, Colorado has maximum ABV(12.8%)
+State Colorado has the lack of legal restrictions, the high altitude, and the state's brewing culture which are some of the reasons why ABV is high in their beers  
 
+### Maximum IBU 
+Bitter Bitch Imperial IPA by Astoria Brewing Company in Astoria, Oregon is the most bitter beer(IBU - 138)  
+The bitterness in this beer is achieved through the use of a blend of six different hops, which are added to the beer during the brewing process.  
 
+### ABV summary  
+
+Mean is 5.97% and Median is 5.6%.  
+Since mean is greater than median,  ABV data is right skewed  
+We created a variable called Beer Type("Typ") which holds three values('IPA', 'Other Ales', 'Other Beers').  
+By looking at different types of beers the distribution shows that Ales other than IPA and Other type of beers are causing right skewness. Distribution IPA seems to be reasonably normal  
+
+### ABV-IBU Relationship
+
+The evidence suggest that there is a positive relationship between IBU and ABV.  
+Soft cap on ABV at 10% which might be due to state regulations in some of the states.  
+By looking at the data based on Type of beers, IPA tent to have more bitterness for same Alcohol content when compared with other Ales and other type of beers.  
 
 ### KNN Model  
-We created a variable called Beer Type("Typ") which holds three values('IPA', 'Other Ales', 'Other Beers').
+
 As part of implementing a KNN model to predict beer types('IPA' and 'Other Ales'), the variables ABV and IBU are used.
 Looking at the results of our model it seems to be doing a great job classifying the IPAs vs. Other Ales with an accuracy of ~ 90%, sensitivity ~ 89.5% and specificity ~ 91% with a K value of 5. 
+
+### Recommendation for new beer  
+
+Low concentration of IPAs & Ales in southern part of the US  
+Florida has the 3rd largest population and Georgia has the 8th highest population in the US  
+Our recommendation is to release a new beer IPA or Ale in the Florida/Georgia as there is the most opportunity in the state based on our analysis.  
 
 Files included as part of this documentation are  
 
