@@ -1,0 +1,556 @@
+---
+title: "Breweries"
+author: "Jake Rastberger, Lijo Jacob"
+date: "2023-02-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+```{r libraries}
+library(ggplot2)
+library(dplyr)
+library(forcats)
+library(stringi)
+library(stringr)
+library(e1071)
+library(caret)
+library(class)
+library(cvms)
+library(maps)
+library(ggthemes)
+library(readxl)
+library(tidyverse)
+```
+
+## How many breweries are present in each state
+
+This code first cleans up the breweries data set removing duplicated data. For example breweries with difference in upper and lower case letters.
+
+We then join the breweries data set to a US map data set so we can visualize our finding. Based on the data that we provided the States with the most breweries are Colorado (47), California (39), Michigan (32), Oregon (29) and Texas (28).A list of all 50 States and the number of breweries prints out at the end of this code block
+
+```{r breweries_per_state, echo=TRUE}
+# Read in breweries data
+breweriesdf <- read_csv("../raw_data/Breweries.csv")
+
+# Trim out white space and change case to all upper so we can remove the 
+# duplicated breweries
+breweriesdf <- breweriesdf %>%
+  mutate_if(is.character, str_trim)
+breweriesdf <- breweriesdf %>%
+  mutate_if(is.character, toupper)
+
+# Remove duplicate Breweries
+breweriesdf <- breweriesdf %>%
+  distinct(Name, City, State, .keep_all=TRUE)
+
+# Create a look-up table for states
+lookup = data.frame(abb = state.abb, StateFN = state.name)
+
+# Replace DC with MD as its the state most of DC falls into and we need all
+# records to map to a state for the map graph later
+breweriesdf <- breweriesdf %>%
+  mutate(State = case_when(State == "DC" ~ "MD",
+                           State != "DC" ~ State))
+# Add State info to breweries data set
+breweriesdf = merge(breweriesdf, lookup, by.x = "State", by.y = "abb")
+
+# Get a count of all breweries in each State
+breweriesByStatedf <- breweriesdf %>% group_by(StateFN, State) %>% 
+  summarise(breweryCount=n(), .groups = 'drop')
+
+# Join mapping data to count of breweries in each State data
+breweriesByStatedf$region <- tolower(breweriesByStatedf$StateFN)
+states <- map_data("state")
+map.df <- merge(states, breweriesByStatedf, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+
+# Create data for state abbreviation for map graph
+centroids <- data.frame(region=tolower(state.name), long=state.center$x, 
+                        lat=state.center$y)
+centroids$abb <- state.abb[match(centroids$region,tolower(state.name))]
+
+# Plot map
+ggplot(map.df, aes(x=long, y=lat, group=group)) +
+  geom_polygon(aes(fill=breweryCount)) +
+  with(centroids,
+       annotate(geom="text", x=long, y=lat, label=abb, size=4, color="black")) +
+  scale_fill_gradientn(colors=rev(heat.colors(5)), na.value="skyblue") + 
+  ggtitle("Breweries by State") +
+  coord_map()
+
+# Arrange by bewery count
+breweriesByStatedf = breweriesByStatedf %>% arrange(desc(breweryCount))
+
+# Top 5 States
+breweriesByStatedf %>% 
+  head(sort(breweriesByStatedf$breweryCount, decreasing=TRUE), n=5) %>%
+  slice_max(breweryCount, n=5, with_ties=FALSE) %>%
+  mutate(State1 = fct_reorder(StateFN, desc(breweryCount))) %>%
+  ggplot(aes(x=State1, y=breweryCount)) + 
+  geom_bar(stat = "identity") +
+  ggtitle("Top 5 States with most Breweries") +
+  labs(x='State', y='Count') +
+  theme_economist()
+
+# This will print out the number of breweries in each State    
+breweriesByStatedf
+```
+
+## IBV & ABV
+
+In this section we join the breweries data to the beer data. 
+
+There was duplicated data in the beer data set for example beers with year in the name as well as beers with different oz which was not relevant to our analysis.
+
+We noticed that there was quite a bit of missing data in both the ABV and IBU columns. After running the commented out R code we discovered that the data was not missing completely at random with certain breweries missing all ABV and IBU columns.Based on this we manually got the data from external sources (untappd.com). We still couldn't find all of the missing data so for the remaining 23 beers with missing ABV data we dropped them from the data set. We then imputed the mean of IBU by style for the remaining missing IBU data.
+
+```{r Replacing missing values}
+# Read in the data that has been manually updated (replaced all missing ABU 
+# values that could be found)
+beersnewdf <- read_csv("../raw_data/beers_data_updated.csv")
+newbbjoinddf <- merge(beersnewdf, breweriesdf, by.x = "Brewery_id", 
+                      by.y = "Brew_ID")
+colnames(newbbjoinddf)[which(names(newbbjoinddf) == "Name.x")] <- "Beer_Name"
+colnames(newbbjoinddf)[which(names(newbbjoinddf) == "Name.y")] <- "Brewery_Name"
+
+# Print first and last 6 observations in this data set
+head(newbbjoinddf)
+tail(newbbjoinddf)
+
+# Remove Dates from beer names ex: Undertaker and Undertaker (2014)
+newbbjoinddf$Beer_Name <- str_remove_all(newbbjoinddf$Beer_Name, '[(\\d{4})]')
+
+# Remove Duplicates based on beer name, brewery and style this will get rid of 
+# the before mentioned beer with dates as well as beers with just different oz
+newbbjoinddf <- newbbjoinddf %>%
+  distinct(Beer_Name, Brewery_id, Style, .keep_all=TRUE)
+
+
+# You can use the below code if you load new data to check if there is any 
+# evidence that the data is not missing at random and if so you can narrow down
+# what you need to manually replace
+# bbjoinddf %>%
+#   mutate(missing_ABV = case_when(is.na(ABV) ~ 1,
+#                                  !is.na(ABV) ~ 0)
+#          ) %>% # create is missing column
+#   group_by(Brewery_id) %>%
+#   summarize(mean=mean(missing_ABV),
+#             count=n()) %>%
+#   filter(mean > 0.05)
+# 
+# newbbjoinddf %>%
+#   mutate(missing_ABV = case_when(is.na(ABV) ~ 1,
+#                                  !is.na(ABV) ~ 0)
+#          ) %>% # create is missing column
+#   group_by(Brewery_id) %>%
+#   summarize(mean=mean(missing_ABV),
+#             count=n()) %>%
+#   filter(mean > 0.05)
+# 
+# newbbjoinddf %>%
+#   mutate(missing_ABV = case_when(is.na(ABV) ~ 1,
+#                                  !is.na(ABV) ~ 0)
+#          ) %>% # create is missing column
+#   group_by(Style) %>%
+#   summarize(mean=mean(missing_ABV),
+#             count=n(),
+#             sum(missing_ABV)) %>%
+#   filter(mean > 0.05)
+# 
+# newbbjoinddf %>%
+#   mutate(missing_IBU = case_when(is.na(IBU) ~ 1,
+#                                  !is.na(IBU) ~ 0)
+#          ) %>% # create is missing column
+#   group_by(Style) %>%
+#   summarize(mean=mean(missing_IBU),
+#             count=n(),
+#             sum=sum(missing_IBU)) %>%
+#   filter(mean > 0.5) 
+# 
+# newbbjoinddf %>%
+#   mutate(missing_IBU = case_when(is.na(IBU) ~ 1,
+#                                  !is.na(IBU) ~ 0)
+#          ) %>% # create is missing column
+#   group_by(Brewery_id) %>%
+#   summarize(mean=mean(missing_IBU),
+#             count=n(),
+#             sum=sum(missing_IBU)) %>%
+#   filter(mean >= .5 & count >= 10) 
+
+
+# Delete all NA ABV because we couldn't find values
+newbbjoinddf <- newbbjoinddf %>% filter(!is.na(ABV))
+
+# Find Mean and fill in missing IBU values
+# Separate data based on if IBU is in the data
+bbjoinddf1 = newbbjoinddf %>% filter(!is.na(IBU))
+bbjoinddf2 = newbbjoinddf %>% filter(is.na(IBU))
+# Compute the mean of IBU for all styles
+bbaggrdf = bbjoinddf1 %>% group_by(Style) %>% summarize(Mean=mean(IBU))
+# Merge mean IBU for style into data set that doesn't have IBU
+bbfillmngDF = merge(bbjoinddf2, bbaggrdf, by = "Style")
+bbfillmngDF <- bbfillmngDF[-c(6)]
+colnames(bbfillmngDF)[11]="IBU"
+# Combine all data back together to get one data set again
+mergedDf = union(bbjoinddf1,bbfillmngDF)
+```
+## Compute the median alcohol content and international bitterness unit for each state. Plot a bar chart to compare.
+
+The median IBU is 33 and the median ABV is 0.056 for this data set. One thing to note is for the median ABV data set by State Utah has a regulation where you can not sell beers with more than 5% ABV which is why the median is so low.
+
+The reason why West Virginia has an extremely high IBU is because West Virginia only has two beers in this data set which is messing with the results.
+
+```{r median alcohol}
+# create data frames for median for ABV and IBU by State 
+mergedDfIBU = mergedDf %>% group_by(State) %>% summarize(Median_IBU=median(IBU))
+mergedDfABV = mergedDf %>% group_by(State) %>% summarize(Median_ABV=median(ABV))
+# Get overall median for ABV and IBU 
+medianIBU = mergedDf %>% summarize(Median_IBU=median(IBU)) #33
+medianABV = mergedDf %>% summarize(Median_ABV=median(ABV)) #0.056
+
+# Create plot for median ABV
+mergedDfABV %>% mutate(State1 = fct_reorder(State, desc(Median_ABV))) %>% 
+  ggplot(aes(x=State1, y = Median_ABV)) + 
+  geom_bar(stat = "identity", color="darkslategray4", fill="honeydew2") +
+  ggtitle("Median ABV by State") +
+  labs(x='States', y='Median ABV') +
+  geom_hline(yintercept=0.056, linetype="dashed", color = "gray47",size = 2) +
+  annotate("text", x="MT", y=0.059, label="Overall Median ABV",color = "gray47",size = 4) +
+  scale_y_continuous(breaks = sort(c(seq(min(0), max(.06), length.out=5), 0.056)))+
+  theme(axis.text.x = element_text(angle = 90))  +
+  theme(text = element_text(size = 12)) 
+
+# Create plot for median IBU
+mergedDfIBU %>% mutate(State1 = fct_reorder(State, desc(Median_IBU))) %>% 
+  ggplot(aes(x=State1, y = Median_IBU)) + 
+  geom_bar(stat = "identity", color="darkslategray4", fill="honeydew2") +
+  ggtitle("Median IBU by State") +
+  labs(x='States', y='Median IBU') +
+  geom_hline(yintercept=33, linetype="dashed", color = "gray47",size = 2) +
+  annotate("text", x="NC", y=36, label="Overall Median IBU",color = "gray47",size = 4) +
+  scale_y_continuous(breaks = sort(c(seq(min(0), max(60), length.out=5), 33))) +
+  theme(axis.text.x = element_text(angle = 90))  + 
+  theme(text = element_text(size = 12)) 
+```
+
+## Which state has the maximum alcoholic (ABV) beer? Which state has the most bitter (IBU) beer?
+
+Colorado does not have a maximum ABV limit for beer sold in stores or served in restaurants and bars Colorado's high altitude can affect the brewing process, leading to a higher ABV in some beers. Colorado has a long history of craft brewing which allows experimentation and innovation. 
+
+Lee Hill Series Vol. 5 - Belgian Style Quadrupel Ale by Upslope Brewing Company in Boulder, Colorado has maximum ABV(12.8%)
+
+
+Bitter Bitch Imperial IPA by Astoria Brewing Company in Astoria, Oregon is the most bitter beer with 138 IBU.
+
+Bitter Bitch Imperial IPA
+The high bitterness is achieved through the use of a blend of six different hops.
+
+```{r Highest ABV and IBU}
+# State with highest ABV
+max_abv <- mergedDf %>% group_by(State) %>% summarize(Max=max(ABV)) %>% 
+  arrange(desc(Max))
+head(max_abv,1)
+
+# Beer with highest ABV
+mergedDf %>% filter(ABV==0.128)
+max_ibu <- mergedDf %>% group_by(State) %>% summarize(Max=max(IBU)) %>% 
+  arrange(desc(Max))
+
+# State with highest IBU
+head(max_ibu,1)
+# Beer with highest IBU
+mergedDf %>% filter(IBU==138)
+```
+
+
+## Comment on the summary statistics and distribution of the ABV variable.
+
+The mean (5.97%) is greater than the median (5.6%) so this data is slightly right skewed. 
+
+When you break out summary statistics by beer type (IPA, Other Ales, Other beers) IPAs are normally distributed but Other Ales and Other beers are still right skewed.
+
+``` {r Summary Statistics and Distribution of ABV}
+# Summary statistics for data set
+summary(mergedDf$ABV)
+# Box plot of data to provide more context of summary statistics
+mergedDf %>% ggplot(aes(x=ABV)) + geom_boxplot()
+# Adding new column called "Typ" that classifies IPAs, Other Ales, and Other
+# beers
+AllBeersDF = mergedDf %>% filter(!is.na(ABV)) %>%
+  mutate(Typ= case_when(
+    stringr::str_detect(toupper(Style), "\\bIPA\\b")~"IPA",
+    stringr::str_detect(toupper(Style), "\\bALE\\b")~"Other Ales",
+    TRUE~"Other Beers"))
+
+# Count the number of each "Typ" of beer
+AllBeersDF %>% group_by(Typ) %>% count()
+
+# Distribution for all ABV
+AllBeersDF %>% ggplot(aes(x = ABV, fill = Typ)) + 
+  geom_bar(stat = "count",width = .0008) +
+  ggtitle("Overall ABV Distribution") + 
+  ylab("Count") + 
+  theme(text = element_text(size = 16)) 
+# Distribution for each type ABV
+AllBeersDF %>% ggplot(aes(x = ABV, fill = Typ)) + 
+  geom_bar(stat = "count",width = .0008) +
+  ggtitle("ABV Distribution for Beer Types") +
+  ylab("Count")  +
+  facet_wrap(~Typ)  + 
+  theme(text = element_text(size = 8)) 
+```
+
+## Is there an apparent relationship between the bitterness of the beer and its alcoholic content? Draw a scatter plot.    Make your best judgment of a relationship and EXPLAIN your answer.
+
+The evidence suggest that there is a positive relationship between IBU and ABV.
+
+Soft cap on ABV at 10% which might be due to state regulations in some of the states.
+
+By looking at the data based on Type of beers, IPAs tend to have more bitterness for same Alcohol content when compared with other Ales and other type of beers.
+
+
+``` {r Relationship between bitterness and alcoholic content}
+# Scatter plot of overall relationship between IBU and ABV 
+AllBeersDF %>% ggplot(aes(x=IBU,y=ABV)) +
+  geom_point(position = "jitter") +
+  geom_smooth(method = lm) +
+  ggtitle("IBU - ABV Relationship") +
+  theme(text = element_text(size = 16)) 
+
+# Scatter plot of relationship between IBU and ABV by type
+AllBeersDF %>% ggplot(aes(x=IBU,y=ABV, color = Typ)) +
+  geom_point(position = "jitter") +
+  geom_smooth(method = lm) +
+  ggtitle("IBU - ABV Relationship for Beer Types") +
+  facet_wrap(~Typ) +
+  theme(text = element_text(size = 16)) 
+```
+
+## Use KNN to investigation the relationship between ABV and IBU 
+
+We first determined the optimal value for K by iteration over random samples of test and train data 200 times for the values of K ranging from 1-20. The optimal value was 5 for this data set.
+
+Using 5 for K in our KNN classifier we were able to achieve ~90% accuracy in classifying beer type in the data. 
+
+Visualizing the classification we can clearly see that there is a dividing line between IPAs and Other Ales around 50 IBUs.
+
+
+``` {r KNN classifier}
+# Create function to iterate over random samples of test and training data to 
+# help determine the optimal value for K
+knn_loop <- function(iterations, num_of_k_s, split_percent, data_for_model,
+                     data_start_column, data_end_column, label_column) {
+  # This functions assumes all labeling data is either at the end or the 
+  # beginning of your data frame.
+  
+  # Create a matrix to store accuracy
+  masterAcc = matrix(nrow = iterations, ncol = numks)
+
+  for(j in 1:iterations)
+  { 
+    # create a random sample split data for training and testing
+    trainIndices = sample(1:dim(data_for_model)[1],
+                        round(splitPerc * dim(data_for_model)[1]))
+    train = data_for_model[trainIndices,]
+    test = data_for_model[-trainIndices,]
+    for(i in 1:numks)
+    {
+      # Create KNN model and store its classifications for test data in a 
+      # variable.
+      classifications = knn(train[,data_start_column:data_end_column], 
+                            test[,data_start_column:data_end_column], 
+                            train[[label_column]], 
+                            k = i, 
+                            prob = TRUE
+                            )
+      CM = confusionMatrix(table(classifications, test[[label_column]]))
+      # store the accuracy for this loop in the accuracy matrix
+      masterAcc[j,i] = CM$overall[1]
+    }
+  }
+  
+  MeanAcc = colMeans(masterAcc)
+  return(MeanAcc)
+}
+
+# Split data frame into IPA and Other Ales and label them respectively
+NonIPAAledf = mergedDf %>% filter(!is.na(ABV) &  !is.na(IBU)) %>%
+  filter(!str_detect(Style, "IPA")) %>%
+  filter(str_detect(Style, "Ale")) %>% mutate(Typ= "Other Ales")
+
+IPAdf = mergedDf %>% 
+  filter(!is.na(ABV) &  !is.na(IBU)) %>% 
+  filter(str_detect(Style, "IPA")) %>% 
+  mutate(Typ= "IPA")
+
+# Join data back together after labeling
+Ales_DF = union(IPAdf,NonIPAAledf)
+
+
+# Set up parameters for KNN loop
+iterations = 200
+numks = 20
+splitPerc = .7
+
+# Run the loop for the desired amount of iterations and values for k to find 
+# optimal value of K to use on this data set
+MeanAcc = 
+  knn_loop(iterations=iterations, num_of_k_s=numks, split_percent=splitPerc,
+           data_for_model=Ales_DF, data_start_column=4, data_end_column=5,
+           label_column="Typ")
+
+
+# Turn Mean Acc into a df
+sequence_of_k_s = seq(1,numks,1)
+Mean_Acc_df = as.data.frame(MeanAcc)
+Mean_Acc_df$K_value = sequence_of_k_s
+
+# Create a graph of average accuracy across all values for k
+Mean_Acc_df %>%
+  ggplot(aes(x=K_value, y=MeanAcc)) +
+  geom_line() +
+  ggtitle("Accuracy across values of K") +
+  labs(x='Number for K', y='Accuracy') +
+  theme_economist()
+
+
+# Run KNN again with the optimal value of k found in above graph.
+trainIndices = sample(1:dim(Ales_DF)[1],
+                      round(splitPerc * dim(Ales_DF)[1]))
+train = Ales_DF[trainIndices,]
+test = Ales_DF[-trainIndices,]
+
+classifications = knn(train[,4:5], 
+                      test[,4:5], 
+                      train[["Typ"]], 
+                      k = 5
+                      )
+
+# Create confusion matrix of results
+# CM = confusionMatrix(table(classifications, test[["Typ"]]))
+# CM
+# Create table of classification to use in "plot_confusion_matrix" to create 
+# nice visual of confusion matrix
+df1 = data.frame(classifications, test$Typ)
+basic_table =table(classifications, test$Typ)
+basic_table =table(df1)
+
+cfm <- as_tibble(basic_table)
+plot_confusion_matrix(cfm, 
+                      target_col = "test.Typ", 
+                      prediction_col = "classifications",
+                      counts_col = "n")
+
+# create data frame to show how well our KNN classifier predicted the different
+# types of beers
+Ales_Results_DF <- test
+Ales_Results_DF$knn_label = classifications
+# Create Boolean column if KNN classified correctly
+Ales_Results_DF <- Ales_Results_DF %>% 
+  mutate(correct_label = case_when(Typ != knn_label ~ 0,
+                                   Typ == knn_label ~ 1))
+Ales_Results_DF$correct_label <- as.factor(Ales_Results_DF$correct_label)
+# Create graph of lables with dividing line at 50 IBU which was determined to be
+# a good dividing line based on current data set.
+Ales_Results_DF %>%
+  ggplot(aes(y=IBU, x=ABV, color=correct_label, shape=Typ)) +
+  geom_point(position = "jitter") +
+  geom_hline(yintercept=50, linetype="dashed", color = "gray47", size = 2) +
+  annotate("text", x=.03, y=55, label="50",color = "gray47",size = 4) +
+  ggtitle("Results of KNN Model on Test Data") +
+  labs(color="Correct Label", shape="Ale Type")
+```
+
+
+## Knock their socks off!  Find one other useful inference from the data that you feel Budweiser may be able to find value in.  You must convince them why it is important and back up your conviction with appropriate statistical evidence. 
+
+Our recommendation is to release a new beer IPA or Ale in the Florida/Georgia as there is the most opportunity in the state based on our analysis.
+
+
+``` {r}
+# Picking up only IPA and Ales
+IPA_DF = AllBeersDF %>% filter(Typ %in% c("IPA" ))
+Ales_DF = AllBeersDF %>% filter(Typ %in% c("Other Ales" ))
+
+# Map to State data set
+stateLkp = data.frame(State = state.abb, StateFulNM = state.name)
+IPA_DFa = merge(stateLkp,IPA_DF, by = "State", all.x = TRUE)
+IPA_DFSt = IPA_DFa %>% group_by(StateFulNM,Typ) %>% summarize(cnt=n()) %>% arrange(cnt)
+Ales_DFa = merge(stateLkp,Ales_DF, by = "State", all.x = TRUE)
+Ales_DFSt = Ales_DFa %>% group_by(StateFulNM,Typ) %>% summarize(cnt=n()) %>% arrange(cnt)
+colnames(IPA_DFSt)[1] = "StateName"
+colnames(Ales_DFSt)[1] = "StateName"
+# Identify the percentages of IPA and Ales by State
+IPA_DFSt = IPA_DFSt %>% mutate(cnt = if(is.na(Typ)) 0 else cnt)
+IPA_DFSt$Total = sum(IPA_DFSt$cnt)
+IPA_DFSt$Percentage = round((IPA_DFSt$cnt/IPA_DFSt$Total)*100,2)
+
+Ales_DFSt = Ales_DFSt %>% mutate(cnt = if(is.na(Typ)) 0 else cnt)
+Ales_DFSt$Total = sum(Ales_DFSt$cnt)
+Ales_DFSt$Percentage = round((Ales_DFSt$cnt/Ales_DFSt$Total)*100,2)
+
+
+# Join mapping data to count of breweries in each State data IPA data
+IPA_DFSt$region <- tolower(IPA_DFSt$StateName)
+states <- map_data("state")
+map.df <- merge(states, IPA_DFSt, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+
+centroids <- data.frame(region=tolower(state.name), long=state.center$x, 
+                        lat=state.center$y)
+centroids$abb <- state.abb[match(centroids$region,tolower(state.name))]
+
+centroids$percent <- paste(map.df$Percentage[match(centroids$region,map.df$region)],"%","")
+centroids$abbpercent <- paste(centroids$abb, centroids$percent, sep= ":")
+
+# Plot IPA map
+ggplot(map.df, aes(x=long, y=lat, group=group)) +
+  geom_polygon(aes(fill=Percentage)) +
+  geom_path(color="beige") +
+  with(centroids,
+       annotate(geom="text", x=long, y=lat, label=abbpercent, size=2, color="black")) +
+  scale_fill_gradientn(colors = c("skyblue", "aliceblue", "orange"), na.value="grey50") + 
+  ggtitle("IPA by State") + xlab("")+ ylab("") +
+  coord_map() +
+  theme(text = element_text(size = 8)) 
+
+
+# Join mapping data to count of breweries in each State data Ale data
+Ales_DFSt$region <- tolower(Ales_DFSt$StateName)
+states <- map_data("state")
+map.df <- merge(states, Ales_DFSt, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+
+centroids <- data.frame(region=tolower(state.name), long=state.center$x, 
+                        lat=state.center$y)
+centroids$abb <- state.abb[match(centroids$region,tolower(state.name))]
+
+centroids$percent <- paste(map.df$Percentage[match(centroids$region,map.df$region)],"%","")
+centroids$abbpercent <- paste(centroids$abb, centroids$percent, sep= ":")
+# Plot map
+ggplot(map.df, aes(x=long, y=lat, group=group)) +
+  geom_polygon(aes(fill=Percentage)) +
+  geom_path(color="beige") +
+  with(centroids,
+       annotate(geom="text", x=long, y=lat, label=abbpercent, size=2, color="black")) +
+  scale_fill_gradientn(colors = c("skyblue", "aliceblue", "orange"), na.value="grey50") + 
+  ggtitle("Ales other than IPA by State") + xlab("")+ ylab("") + 
+  coord_map() +
+  theme(text = element_text(size = 8)) 
+
+```
+
+## Summary
+Breweries seems to be clustered along the west cost, northeast and eastern Midwest US.
+
+The evidence suggest as IBU goes up so does ABV.
+
+The evidence suggest that a common defining factor between IPAs and Other Ales is IBU.
+
+To introduce new beers, Budweiser should look to release a new IPA or Ale in Florida and/or Georgia.
+
